@@ -23,7 +23,6 @@
 
 package firetongue;
 
-import firetongue.FireTongue.Case;
 import firetongue.FireTongue.LoadTask;
 import haxe.xml.Fast;
 
@@ -85,21 +84,14 @@ class FireTongue
 	public var missingFlags(default, null):Map<String,Array<String>>;
 	
 	/**
-	 * what text case (if any) to process flags with when getting strings
-	 */
-	public var forceFlagsToCase(default, null):Case;
-	
-	/**
 	 * Creates a new Firetongue instance.
 	 * @param	framework (optional): Your haxe framework, ie: OpenFL, Lime, VanillaSys, etc. Leave null for firetongue to make a best guess, or supply your own loading functions to ignore this parameter entirely.
 	 * @param	checkFile (optional) custom function to check if a file exists
 	 * @param	getText (optional) custom function to load a text file
 	 * @param	getDirectoryContents (optional) custom function to list the contents of a directory
-	 * @param	forceCase (optional) what case to force for flags in CSV/TSV files, and in the get() function -- default is to force uppercase.
 	 */
-	public function new(?framework:Framework, ?checkFile:String->Bool, ?getText:String->String, ?getDirectoryContents:String->Array<String>, ?forceCase:Case=Case.Upper) 
+	public function new(?framework:Framework, ?checkFile:String->Bool, ?getText:String->String, ?getDirectoryContents:String->Array<String>) 
 	{
-		forceFlagsToCase = forceCase;
 		getter = new Getter(framework, checkFile, getText, getDirectoryContents);
 	}
 	
@@ -163,17 +155,8 @@ class FireTongue
 	
 	public function get(flag:String, context:String = "data", safe:Bool = true):String
 	{
-		if (flag == null){
-			return null;
-		}
-		
 		var orig_flag:String = flag;
-		flag = switch(forceFlagsToCase)
-		{
-			case Upper: flag.toUpperCase();
-			case Lower: flag.toLowerCase();
-			default: flag;
-		}
+		flag = flag.toUpperCase();
 		
 		if (context == "index")
 		{
@@ -191,23 +174,73 @@ class FireTongue
 		try
 		{
 			str = index.get(flag);
+      if (str == null) str = index.get(orig_flag);
 			
 			if (str != null && str != "")
 			{
-				var redirectStr = tryRedirect(index, str);
-				if (redirectStr != null)
+				while(str.indexOf("<RE>[") != -1)			//it's a redirect in the middle of the flag with bracket notation
 				{
-					str = redirectStr;
-				}
-				else
-				{
-					if (safe)
+					var done:Bool = false;
+					var failsafe:Int = 0;
+					
+					var start:Int = str.indexOf("<RE>[");
+					var end:Int = str.indexOf("]");
+					
+					var flag = "";
+					var match = "";
+					
+					if (start != 1 && end != -1)				//redirection exists
 					{
-						str = flag;
+						match = str.substr(start, end + 1);
+						flag = str.substring(start + 5, end);	//cut off the redirection and the brackets
+						
+						if (flag == "" || flag == null)
+						{
+							break;
+						}
+						
+						var new_str = index.get(flag);					//look it up again
+						
+						if (new_str == null || new_str == "")		//give up
+						{
+							done = true;
+						}
+						str = StringTools.replace(str, match, new_str);
 					}
-					else
+				}
+				
+				if (str.indexOf("<RE>") == 0 && str.indexOf("<RE>[") == -1)					//it's a whole-line redirect
+				{
+					var done:Bool = false;
+					var failsafe:Int = 0;
+					str = StringTools.replace(str, "<RE>", "");	//cut out the redirect
+					while (!done)
 					{
-						str = redirectStr;
+						var new_str:String = index.get(str);	//look it up again
+						if (new_str != null && new_str != "") 	//string exists
+						{
+							str = new_str;
+							if (str.indexOf("<RE>") != 0)			//if it's not ANOTHER redirect, stop looking
+							{
+								done = true;
+							}
+							else
+							{
+								//another redirect, keep looking
+								str = StringTools.replace(str, "<RE>", "");
+							}
+						}
+						else										//give up
+						{
+							done = true;
+							str = new_str;
+						}
+						failsafe++;
+						if (failsafe > 100)							//max recursion: 100
+						{
+							done = true;
+							str = new_str;
+						}
 					}
 				}
 				
@@ -252,7 +285,6 @@ class FireTongue
 		
 		return str;
 	}
-	
 	/**
 	 * Get a font name, honoring locale replacement rules
 	 * @param	str
@@ -327,52 +359,12 @@ class FireTongue
 	}
 	
 	/**
-	 * Returns a copy of the specified locale definition's xml node
-	 * @param	targetLocale	the locale in question, ie "en-US"
-	 * @return
-	 */
-	
-	public function getIndexNode(targetLocale:String = ""):Xml
-	{
-		var node:Fast = indexLocales.get(targetLocale);
-		return Xml.parse(node.x.toString());
-	}
-	
-	/**
-	 * Gets an attribute from the specified locale definition's xml node
-	 * @param	targetLocale	the locale in question, ie "en-US"
-	 * @param	attribute	the attribute you want, ie "volunteer"
-	 * @param	child	(optional) the name of a child node if you want to read from that instead of the main root
-	 * @return
-	 */
-	public function getIndexAttribute(targetLocale:String, attribute:String, ?child:String=""):String
-	{
-		var node:Fast = indexLocales.get(targetLocale);
-		
-		if (child != null && node.hasNode.resolve(child))
-		{
-			node = node.node.resolve(child);
-		}
-		
-		if (node != null && node.has.resolve(attribute))
-		{
-			return node.att.resolve(attribute);
-		}
-		return "";
-	}
-	
-	/**
 	 * 
 	 * @param	flag
 	 * @return
 	 */
-	public function getIndexString(indexString:IndexString, targetLocale:String="", currLocale:String=""):String
+	public function getIndexString(indexString:IndexString, targetLocale:String=""):String
 	{
-		if (currLocale == "")
-		{
-			currLocale = locale;
-		}
-		
 		if (targetLocale == "")
 		{
 			targetLocale = locale;
@@ -390,9 +382,9 @@ class FireTongue
 			{
 				if (lNode.has.id) {
 					var lnid:String = lNode.att.id;
-					if (lnid.indexOf(currLocale) != -1)		//if it matches the CURRENT locale
+					if (lnid.indexOf(locale) != -1)		//if it matches the CURRENT locale
 					{
-						currLangNode = lNode;				//labels in CURRENT language
+						currLangNode = lNode;			//labels in CURRENT language
 					}
 					if (lnid.indexOf(targetLocale) != -1)		//if it matches its own NATIVE locale
 					{
@@ -410,15 +402,15 @@ class FireTongue
 		{
 			case IndexString.TheWordLanguage:
 				//return the localized word "LANGUAGE"
-				if (lindex.hasNode.ui && lindex.node.ui.has.language)
+				if (nativeNode.hasNode.ui && nativeNode.node.ui.has.language)
 				{
-					return lindex.node.ui.att.language;
+					return currLangNode.node.ui.att.language;
 				}
 			case IndexString.TheWordRegion:
 				//return the localized word "REGION"
-				if (lindex.hasNode.ui && lindex.node.ui.has.region)
+				if (nativeNode.hasNode.ui && nativeNode.node.ui.has.region)
 				{
-					return lindex.node.ui.att.region;
+					return currLangNode.node.ui.att.region;
 				}
 			case IndexString.Language:
 				//return the name of this language in CURRENT language
@@ -1130,14 +1122,7 @@ class FireTongue
 					var field:String = csv.fields[fieldi];
 					if (field != "comment")
 					{
-						var newFlag = (flag + "_" + field);
-						newFlag = switch(forceFlagsToCase)
-						{
-							case Upper: newFlag.toUpperCase();
-							case Lower: newFlag.toLowerCase();
-							default: newFlag;
-						}
-						writeIndex(index, newFlag, row[fieldi],id,checkVsDefault);
+						writeIndex(index, (flag + "_" + field).toUpperCase(), row[fieldi],id,checkVsDefault);
 					}
 				}
 			}
@@ -1146,16 +1131,6 @@ class FireTongue
 				//If only two non-comment fields, 
 				//Assume it's the standard ("flag","value") pattern
 				//Just write the first cell
-				
-				if (flag != null)
-				{
-					flag = switch(forceFlagsToCase)
-					{
-						case Upper: flag.toUpperCase();
-						case Lower: flag.toLowerCase();
-						default: flag;
-					}
-				}
 				writeIndex(index, flag, row[1], id, checkVsDefault);
 			}
 		}
@@ -1208,57 +1183,6 @@ class FireTongue
 		default:
 			//donothing
 		}
-	}
-	
-	private function redirectSection(start:Int, end:Int, index:Map<String,String>, str:String):String
-	{
-		var flag = "";
-		var match = "";
-		
-		if (start != 1 && end != -1 && end > start)	//redirection exists
-		{
-			match = str.substring(start, end + 1);
-			flag = str.substring(start + 5, end);	//cut off the redirection and the brackets
-			
-			if (flag == "" || flag == null)
-			{
-				return null;
-			}
-			
-			if (index.exists(flag))
-			{
-				var new_str = index.get(flag);					//look it up again
-				
-				if (new_str != null)
-				{
-					//If we have whole-line redirects as the targets for our section redirect, we need to resolve those
-					//completely before we substitute them into the parent string. If they contain further sectional redirects,
-					//those will be caught & processed later
-					while(new_str.indexOf("<RE>") != -1 && new_str.indexOf("<RE>[") == -1)
-					{
-						var new_str_redirect = redirectLine(index, new_str);
-						if (new_str_redirect != null)
-						{
-							new_str = new_str_redirect;
-						}
-					}
-					
-					str = StringTools.replace(str, match, new_str);
-					return str;
-				}
-			}
-		}
-		return null;
-	}
-	
-	private function redirectLine(index:Map<String,String>, str:String):String
-	{
-		str = StringTools.replace(str, "<RE>", "");	//cut out the redirect
-		if (index.exists(str))
-		{
-			return index.get(str);	//look it up again
-		}
-		return null;
 	}
 	
 	private function startLoad(?asynchMethod:Array<LoadTask>->Void):Void
@@ -1352,43 +1276,6 @@ class FireTongue
 		return totalDiff;
 	}
 	
-	private function tryRedirect(index:Map<String,String>, str:String, failsafe:Int=100):String
-	{
-		var orig:String = str;
-		var last:String = null;
-		
-		//keep processing until no redirection tokens are detected, or the failsafe is tripped
-		while (str != null && str.indexOf("<RE>") != -1 && failsafe > 0)
-		{
-			last = str;
-			
-			var sectionStart = str.indexOf("<RE>[");
-			var sectionEnd = str.indexOf("]");
-			if (sectionStart != -1 && sectionEnd != -1 && sectionEnd > sectionStart)
-			{
-				//replace the portion inside a redirect section token
-				str = redirectSection(sectionStart, sectionEnd, index, str);
-			}
-			else
-			{
-				//treat it like a whole-line redirect
-				str = redirectLine(index, str);
-			}
-			failsafe--;
-		}
-		if (failsafe <= 0)
-		{
-			trace("WARNING! > " + failsafe + " redirections detected when processing (" + orig + "), failsafe tripped!");
-			str = orig;
-		}
-		
-		if (str == null && last != null)
-		{
-			str = last;
-		}
-		return str;
-	}
-	
 	private function writeIndex(index:Map<String,String>, flag:String, value:String, id:String, checkVsDefault:Bool = false):Void
 	{
 		if (flag == null)
@@ -1438,14 +1325,6 @@ enum Framework
 	NME;
 	Custom;
 	//add more frameworks as they are supported ... maybe?
-}
-
-@:enum
-abstract Case(Int) from Int to Int
-{
-	var Upper = 1;
-	var Lower = -1;
-	var Unchanged = 0;
 }
 
 typedef LoadTask = {fileNode:Fast,check:Bool}

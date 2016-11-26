@@ -40,12 +40,12 @@ class Getter
 	{
 		if (framework_ == null)
 		{
-			#if nme
-				framework = NME;
-			#elseif (openfl || openfl_legacy)
+			#if (openfl || openfl_legacy)
 				framework = OpenFL;
 			#elseif lime
 				framework = Lime;
+			#elseif nme
+				framework = NME;
 			#elseif sys
 				framework = VanillaSys;
 			#else
@@ -120,7 +120,7 @@ class Getter
 	
 	public function getDirectoryContents_OpenFL(path):Array<String>
 	{
-		#if (!nme && (openfl || openfl_legacy))
+		#if (openfl || openfl_legacy)
 			return limitPath(openfl.Assets.list(TEXT), path);
 		#else
 			return null;
@@ -179,7 +179,7 @@ class Getter
 	public function getDirectoryContents_NME(path):Array<String>
 	{
 		#if nme
-			return limitPath([for (x in nme.Assets.list(TEXT)) x], path);
+			return limitPath(nme.Assets.list(TEXT), path);
 		#else
 			return null;
 		#end
